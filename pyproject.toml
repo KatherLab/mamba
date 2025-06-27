@@ -6,7 +6,7 @@ authors = [
     { name = "Tri Dao", email = "tri@tridao.me" },
     { name = "Albert Gu", email = "agu@cs.cmu.edu" }
 ]
-requires-python = ">= 3.9, < 3.13"
+requires-python = ">= 3.9"
 dynamic = ["version"]
 license = { file = "LICENSE" }  # Include a LICENSE file in your repo
 keywords = ["cuda", "pytorch", "state-space model"]
@@ -16,7 +16,7 @@ classifiers = [
     "Operating System :: Unix"
 ]
 dependencies = [
-    "torch==2.6.0",
+    "torch",
     "triton",
     "ninja",
     "einops",
@@ -28,9 +28,6 @@ dependencies = [
 Repository = "https://github.com/state-spaces/mamba"
 
 [project.optional-dependencies]
-causal-conv1d = [
-    "causal-conv1d @ git+https://github.com/KatherLab/causal-conv1d.git@5d231fb1088220e1ff48d71ba16c64c5133e23d4"
-]
 dev = [
     "pytest"
 ]
@@ -40,7 +37,7 @@ dev = [
 requires = [
     "setuptools>=61.0.0",
     "wheel",
-    "torch==2.6.0",
+    "torch",
     "packaging",
     "ninja",
 ]
