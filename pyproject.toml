@@ -16,7 +16,7 @@ classifiers = [
     "Operating System :: Unix"
 ]
 dependencies = [
-    "torch",
+    "torch==2.6.0",
     "triton",
     "ninja",
     "einops",
@@ -28,6 +28,9 @@ dependencies = [
 Repository = "https://github.com/state-spaces/mamba"
 
 [project.optional-dependencies]
+causal-conv1d = [
+    "causal-conv1d @ git+https://github.com/KatherLab/causal-conv1d.git@e2010aa448344c31959a9d345d654e79574fca8a"
+]
 dev = [
     "pytest"
 ]
@@ -37,7 +40,7 @@ dev = [
 requires = [
     "setuptools>=61.0.0",
     "wheel",
-    "torch",
+    "torch==2.6.0",
     "packaging",
     "ninja",
 ]
