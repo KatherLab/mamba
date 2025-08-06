@@ -40,7 +40,7 @@ dev = [
 requires = [
     "setuptools>=61.0.0",
     "wheel",
-    "torch==2.6.0",
+    "torch",
     "packaging",
     "ninja",
 ]
