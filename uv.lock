@@ -11,7 +11,7 @@ resolution-markers = [
 [[package]]
 name = "causal-conv1d"
 version = "1.5.0.post8"
-source = { git = "https://github.com/KatherLab/causal-conv1d.git?rev=55b4626e1a2d3d6b939811725f2f3ef65b7b3ff1#55b4626e1a2d3d6b939811725f2f3ef65b7b3ff1" }
+source = { git = "https://github.com/KatherLab/causal-conv1d.git?rev=b73d1ca0e0726ba6520c38d342bd411bb5850064#b73d1ca0e0726ba6520c38d342bd411bb5850064" }
 dependencies = [
     { name = "ninja" },
     { name = "packaging" },
@@ -236,7 +236,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "causal-conv1d", marker = "extra == 'causal-conv1d'", git = "https://github.com/KatherLab/causal-conv1d.git?rev=55b4626e1a2d3d6b939811725f2f3ef65b7b3ff1" },
+    { name = "causal-conv1d", marker = "extra == 'causal-conv1d'", git = "https://github.com/KatherLab/causal-conv1d.git?rev=b73d1ca0e0726ba6520c38d342bd411bb5850064" },
     { name = "einops" },
     { name = "ninja" },
     { name = "packaging" },
