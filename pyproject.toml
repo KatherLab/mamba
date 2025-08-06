@@ -29,7 +29,7 @@ Repository = "https://github.com/state-spaces/mamba"
 
 [project.optional-dependencies]
 causal-conv1d = [
-    "causal-conv1d @ git+https://github.com/KatherLab/causal-conv1d.git@55b4626e1a2d3d6b939811725f2f3ef65b7b3ff1"
+    "causal-conv1d @ git+https://github.com/KatherLab/causal-conv1d.git@b73d1ca0e0726ba6520c38d342bd411bb5850064"
 ]
 dev = [
     "pytest"
