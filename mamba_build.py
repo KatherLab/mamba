@@ -44,7 +44,7 @@ def _wheel_filename(torch, version_str):
     mamba_ssm-{ver}+{cuX|hipXY}torch{MM.mm}cxx11abi{TRUE|FALSE}-{cpXY}-{cpXY}-{plat}.whl
     """
     py = f"cp{sys.version_info.major}{sys.version_info.minor}"
-    plat = _platform_tag()
+    plat = _get_platform_tag()
     tver = parse(torch.__version__)
     torch_mm = f"{tver.major}.{tver.minor}"
 
