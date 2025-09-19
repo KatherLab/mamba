@@ -14,21 +14,22 @@ import urllib.request
 import urllib.error
 from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
 
-# Try to import torch, but don't fail if it's not available
+# ---- Optional Torch import to support dependency resolution / non-CUDA systems ----
 try:
     import torch
     from torch.utils.cpp_extension import (
         BuildExtension,
         CUDAExtension,
         CUDA_HOME,
-        HIP_HOME
+        HIP_HOME,
     )
     TORCH_AVAILABLE = True
-except ImportError:
+except Exception:
     TORCH_AVAILABLE = False
     torch = None
     CUDA_HOME = None
     HIP_HOME = None
+    BuildExtension = CUDAExtension = None  # type: ignore
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
@@ -46,39 +47,35 @@ SKIP_CUDA_BUILD = os.getenv("MAMBA_SKIP_CUDA_BUILD", "FALSE") == "TRUE"
 # For CI, we want the option to build with C++11 ABI since the nvcr images use C++11 ABI
 FORCE_CXX11_ABI = os.getenv("MAMBA_FORCE_CXX11_ABI", "FALSE") == "TRUE"
 
+# ---------------- Dependency-resolution detection (kept from your fork) ----------------
 def is_dependency_resolution():
     """
     Detect if we're being called for dependency resolution rather than actual building.
-    This checks various indicators that suggest we're in a dependency resolution context.
+    Allows this package to be listed as an optional dependency without forcing CUDA/ROCm.
     """
-    # Check if we're being called by setuptools.build_meta for dependency resolution
     import traceback
     stack = traceback.extract_stack()
-    # Look for setuptools build_meta calls that indicate dependency resolution
+    # Heuristics for setuptools.build_meta during resolution
     for frame in stack:
-        if 'setuptools/build_meta.py' in frame.filename:
-            if any(method in frame.name for method in [
-                'get_requires_for_build',
-                '_get_build_requires'
-            ]):
+        if "setuptools/build_meta.py" in frame.filename:
+            if any(
+                method in frame.name
+                for method in ["get_requires_for_build", "_get_build_requires"]
+            ):
                 return True
-    # Check if CUDA/HIP tools are available - if not, assume dependency resolution
+    # If torch/toolchains are missing and we didn't explicitly skip CUDA build, assume resolution
     if not TORCH_AVAILABLE:
         return True
-    # If torch is available but CUDA_HOME is None and we're not explicitly skipping CUDA build
-    if TORCH_AVAILABLE and CUDA_HOME is None and HIP_HOME is None and not SKIP_CUDA_BUILD:
-        # Additional check: try to run nvcc to see if it's actually available
+    if (CUDA_HOME is None and HIP_HOME is None) and not SKIP_CUDA_BUILD:
         try:
-            subprocess.check_output(['nvcc', '--version'], stderr=subprocess.DEVNULL)
-            return False  # nvcc is available, so we're probably not in dependency resolution
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return True  # nvcc not available, likely dependency resolution
+            subprocess.check_output(["nvcc", "--version"], stderr=subprocess.DEVNULL)
+            return False
+        except Exception:
+            return True
     return False
 
 def get_platform():
-    """
-    Returns the platform name as used in wheel filenames.
-    """
+    """Returns the platform name as used in wheel filenames."""
     if sys.platform.startswith("linux"):
         return "linux_x86_64"
     elif sys.platform == "darwin":
@@ -87,49 +84,43 @@ def get_platform():
     elif sys.platform == "win32":
         return "win_amd64"
     else:
-        raise ValueError("Unsupported platform: {}".format(sys.platform))
+        raise ValueError(f"Unsupported platform: {sys.platform}")
 
 def get_cuda_bare_metal_version(cuda_dir):
     if not cuda_dir:
         return None, None
     try:
         raw_output = subprocess.check_output(
-            [cuda_dir + "/bin/nvcc", "-V"], universal_newlines=True
+            [os.path.join(cuda_dir, "bin", "nvcc"), "-V"], universal_newlines=True
         )
         output = raw_output.split()
         release_idx = output.index("release") + 1
-        bare_metal_ver = parse(output[release_idx].split(",")[0])
-        return raw_output, bare_metal_ver
+        bare_metal_version = parse(output[release_idx].split(",")[0])
+        return raw_output, bare_metal_version
     except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
         return None, None
 
 def get_hip_version(rocm_dir):
     hipcc_bin = "hipcc" if rocm_dir is None else os.path.join(rocm_dir, "bin", "hipcc")
     try:
-        raw_output = subprocess.check_output(
-            [hipcc_bin, "--version"], universal_newlines=True
-        )
+        raw_output = subprocess.check_output([hipcc_bin, "--version"], universal_newlines=True)
     except Exception as e:
-        print(
-            f"hip installation not found: {e} ROCM_PATH={os.environ.get('ROCM_PATH')}"
-        )
+        print(f"hip installation not found: {e} ROCM_PATH={os.environ.get('ROCM_PATH')}")
         return None, None
     for line in raw_output.split("\n"):
         if "HIP version" in line:
-            rocm_version = parse(line.split()[-1].rstrip('-').replace('-', '+')) # local version is not parsed correctly
+            rocm_version = parse(line.split()[-1].rstrip("-").replace("-", "+"))
             return line, rocm_version
     return None, None
 
 def get_torch_hip_version():
     if not TORCH_AVAILABLE or not torch.version.hip:
         return None
-    return parse(torch.version.hip.split()[-1].rstrip('-').replace('-', '+'))
+    return parse(torch.version.hip.split()[-1].rstrip("-").replace("-", "+"))
 
 def check_if_hip_home_none(global_option: str) -> None:
     if HIP_HOME is not None:
         return
-    # warn instead of error because user could be downloading prebuilt wheels, so hipcc won't be necessary
-    # in that case.
     warnings.warn(
         f"{global_option} was requested, but hipcc was not found.  Are you sure your environment has hipcc available?"
     )
@@ -137,8 +128,6 @@ def check_if_hip_home_none(global_option: str) -> None:
 def check_if_cuda_home_none(global_option: str) -> None:
     if CUDA_HOME is not None:
         return
-    # warn instead of error because user could be downloading prebuilt wheels, so nvcc won't be necessary
-    # in that case.
     warnings.warn(
         f"{global_option} was requested, but nvcc was not found.  Are you sure your environment has nvcc available?  "
         "If you're installing within a container from https://hub.docker.com/r/pytorch/pytorch, "
@@ -151,14 +140,15 @@ def append_nvcc_threads(nvcc_extra_args):
 cmdclass = {}
 ext_modules = []
 
-# Only build extensions if we're not in dependency resolution mode
+# ---------------- Build extensions only if truly building (not during resolution) ----------------
 if TORCH_AVAILABLE and not is_dependency_resolution() and not SKIP_CUDA_BUILD:
     HIP_BUILD = bool(torch.version.hip)
-    print("\n\ntorch.__version__  = {}\n\n".format(torch.__version__))
+    print(f"\n\ntorch.__version__  = {torch.__version__}\n\n")
     TORCH_MAJOR = int(torch.__version__.split(".")[0])
     TORCH_MINOR = int(torch.__version__.split(".")[1])
     cc_flag = []
-    bare_metal_version = None  # Initialize to avoid NameError
+    bare_metal_version = None  # robust default
+
     if HIP_BUILD:
         check_if_hip_home_none(PACKAGE_NAME)
         rocm_home = os.getenv("ROCM_PATH")
@@ -173,12 +163,12 @@ if TORCH_AVAILABLE and not is_dependency_resolution() and not SKIP_CUDA_BUILD:
                 warnings.warn(
                     f"{PACKAGE_NAME} requires a patch to be applied when running on ROCm 6.0. "
                     "Refer to the README.md for detailed instructions.",
-                    UserWarning
+                    UserWarning,
                 )
         cc_flag.append("-DBUILD_PYTHON_PACKAGE")
     else:
         check_if_cuda_home_none(PACKAGE_NAME)
-        # Check, if CUDA11 is installed for compute capability 8.0
+
         if CUDA_HOME is not None:
             _, bare_metal_version = get_cuda_bare_metal_version(CUDA_HOME)
             if bare_metal_version and bare_metal_version < Version("11.6"):
@@ -186,32 +176,41 @@ if TORCH_AVAILABLE and not is_dependency_resolution() and not SKIP_CUDA_BUILD:
                     f"{PACKAGE_NAME} is only supported on CUDA 11.6 and above.  "
                     "Note: make sure nvcc has a supported version by running nvcc -V."
                 )
-        cc_flag.append("-gencode")
-        cc_flag.append("arch=compute_53,code=sm_53")
-        cc_flag.append("-gencode")
-        cc_flag.append("arch=compute_62,code=sm_62")
-        cc_flag.append("-gencode")
-        cc_flag.append("arch=compute_70,code=sm_70")
-        cc_flag.append("-gencode")
-        cc_flag.append("arch=compute_72,code=sm_72")
-        cc_flag.append("-gencode")
-        cc_flag.append("arch=compute_80,code=sm_80")
-        cc_flag.append("-gencode")
-        cc_flag.append("arch=compute_87,code=sm_87")
-        # Only add newer architectures if we have a valid bare_metal_version
-        if bare_metal_version:
-            if bare_metal_version >= Version("11.8"):
-                cc_flag.append("-gencode")
-                cc_flag.append("arch=compute_90,code=sm_90")
-            if bare_metal_version >= Version("12.8"):
-                cc_flag.append("-gencode")
-                cc_flag.append("arch=compute_100,code=sm_100")
-    # HACK: The compiler flag -D_GLIBCXX_USE_CXX11_ABI is set to be the same as
-    # torch._C._GLIBCXX_USE_CXX11_ABI
-    # https://github.com/pytorch/pytorch/blob/8472c24e3b5b60150096486616d98b7bea01500b/torch/utils/cpp_extension.py#L920
-    if FORCE_CXX11_ABI:
+
+        # ---- Upstream arch matrix (merged), with safe guards ----
+        # Historically supported:
+        if bare_metal_version and bare_metal_version <= Version("12.9"):
+            cc_flag += ["-gencode", "arch=compute_53,code=sm_53"]
+            cc_flag += ["-gencode", "arch=compute_62,code=sm_62"]
+            cc_flag += ["-gencode", "arch=compute_70,code=sm_70"]
+            cc_flag += ["-gencode", "arch=compute_72,code=sm_72"]
+        else:
+            # Conservative baseline when we can't probe: modern arch set
+            cc_flag += ["-gencode", "arch=compute_62,code=sm_62"]
+            cc_flag += ["-gencode", "arch=compute_70,code=sm_70"]
+            cc_flag += ["-gencode", "arch=compute_72,code=sm_72"]
+
+        # Always add these (upstream)
+        cc_flag += ["-gencode", "arch=compute_75,code=sm_75"]
+        cc_flag += ["-gencode", "arch=compute_80,code=sm_80"]
+        cc_flag += ["-gencode", "arch=compute_87,code=sm_87"]
+
+        # Newer arch support conditionally
+        if bare_metal_version and bare_metal_version >= Version("11.8"):
+            cc_flag += ["-gencode", "arch=compute_90,code=sm_90"]
+        if bare_metal_version and bare_metal_version >= Version("12.8"):
+            cc_flag += ["-gencode", "arch=compute_100,code=sm_100"]
+            cc_flag += ["-gencode", "arch=compute_120,code=sm_120"]
+        if bare_metal_version and bare_metal_version >= Version("13.0"):
+            cc_flag += ["-gencode", "arch=compute_103,code=sm_103"]
+            cc_flag += ["-gencode", "arch=compute_110,code=sm_110"]
+            cc_flag += ["-gencode", "arch=compute_121,code=sm_121"]
+
+    # Match upstream’s CXX11 ABI toggle
+    if FORCE_CXX11_ABI and TORCH_AVAILABLE:
         torch._C._GLIBCXX_USE_CXX11_ABI = True
-    if HIP_BUILD:
+
+    if TORCH_AVAILABLE and HIP_BUILD:
         extra_compile_args = {
             "cxx": ["-O3", "-std=c++17"],
             "nvcc": [
@@ -283,19 +282,15 @@ def get_wheel_url():
     torch_version_raw = parse(torch.__version__)
     HIP_BUILD = bool(torch.version.hip)
     if HIP_BUILD:
-        # We're using the HIP version used to build torch, not the one currently installed
         torch_hip_version = get_torch_hip_version()
         if not torch_hip_version:
             return None, None
         hip_ver = f"{torch_hip_version.major}{torch_hip_version.minor}"
     else:
-        # We're using the CUDA version used to build torch, not the one currently installed
-        # _, cuda_version_raw = get_cuda_bare_metal_version(CUDA_HOME)
         torch_cuda_version = parse(torch.version.cuda) if torch.version.cuda else None
         if not torch_cuda_version:
             return None, None
-        # For CUDA 11, we only compile for CUDA 11.8, and for CUDA 12 we only compile for CUDA 12.3
-        # to save CI time. Minor versions should be compatible.
+        # For CUDA 11, compile for 11.8; for CUDA 12, for 12.3 (compat with minor versions)
         torch_cuda_version = parse("11.8") if torch_cuda_version.major == 11 else parse("12.3")
         cuda_version = f"{torch_cuda_version.major}"
     gpu_compute_version = hip_ver if HIP_BUILD else cuda_version
@@ -305,7 +300,6 @@ def get_wheel_url():
     mamba_ssm_version = get_package_version()
     torch_version = f"{torch_version_raw.major}.{torch_version_raw.minor}"
     cxx11_abi = str(torch._C._GLIBCXX_USE_CXX11_ABI).upper()
-    # Determine wheel URL based on CUDA version, torch version, python version and OS
     wheel_filename = f"{PACKAGE_NAME}-{mamba_ssm_version}+{cuda_or_hip}{gpu_compute_version}torch{torch_version}cxx11abi{cxx11_abi}-{python_version}-{python_version}-{platform_name}.whl"
     wheel_url = BASE_WHEEL_URL.format(
         tag_name=f"v{mamba_ssm_version}", wheel_name=wheel_filename
@@ -314,10 +308,8 @@ def get_wheel_url():
 
 class CachedWheelsCommand(_bdist_wheel):
     """
-    The CachedWheelsCommand plugs into the default bdist wheel, which is ran by pip when it cannot
-    find an existing wheel (which is currently the case for all installs). We use
-    the environment parameters to detect whether there is already a pre-built version of a compatible
-    wheel available and short-circuits the standard full build pipeline.
+    The CachedWheelsCommand plugs into the default bdist wheel, which is run by pip when it cannot
+    find an existing wheel. We try to download a matching prebuilt wheel; otherwise build from source.
     """
     def run(self):
         if FORCE_BUILD or not TORCH_AVAILABLE:
@@ -329,9 +321,7 @@ class CachedWheelsCommand(_bdist_wheel):
         print("Guessing wheel URL: ", wheel_url)
         try:
             urllib.request.urlretrieve(wheel_url, wheel_filename)
-            # Make the archive
-            # Lifted from the root wheel processing command
-            # https://github.com/pypa/wheel/blob/cf71108ff9f6ffc36978069acb28824b44ae028e/src/wheel/bdist_wheel.py#LL381C9-L381C85
+            # Make the archive (lifted from wheel)
             if not os.path.exists(self.dist_dir):
                 os.makedirs(self.dist_dir)
             impl_tag, abi_tag, plat_tag = self.get_tag()
@@ -341,10 +331,9 @@ class CachedWheelsCommand(_bdist_wheel):
             shutil.move(wheel_filename, wheel_path)
         except urllib.error.HTTPError:
             print("Precompiled wheel not found. Building from source...")
-            # If the wheel could not be downloaded, build from source
             super().run()
 
-# Set up cmdclass based on available extensions
+# Set up cmdclass based on available extensions (matches upstream structure, keeps your fallback)
 if ext_modules and TORCH_AVAILABLE:
     cmdclass = {"bdist_wheel": CachedWheelsCommand, "build_ext": BuildExtension}
 else:
